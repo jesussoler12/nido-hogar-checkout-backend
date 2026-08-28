@@ -9,7 +9,7 @@
 // Shopify Payments: la orden queda con estado de pago "pending" (a cobrar),
 // y todo el rastro de cómo se pagará queda en customAttributes (note attributes).
 
-const SHOPIFY_API_VERSION = '2025-01';
+const SHOPIFY_API_VERSION = '2026-07';
 
 const REQUIRED_ENV = ['SHOPIFY_STORE_DOMAIN', 'SHOPIFY_APP_CLIENT_ID', 'SHOPIFY_APP_CLIENT_SECRET'];
 
