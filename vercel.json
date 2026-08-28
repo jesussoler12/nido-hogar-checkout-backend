@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "functions": {
+    "api/crear-pedido.js": {
+      "maxDuration": 15
+    }
+  }
+}
