@@ -46,7 +46,9 @@ async function getAccessToken() {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`No se pudo obtener el token de Admin API: ${text.slice(0, 300)}`);
+    throw new Error(
+      `No se pudo obtener el token de Admin API (domain=${domain}, client_id=${process.env.SHOPIFY_APP_CLIENT_ID}): ${text.slice(0, 300)}`
+    );
   }
 
   const data = await response.json();
