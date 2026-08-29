@@ -56,8 +56,13 @@ que el estado de pago sea el correcto, agrega ese scope al crear la Custom App.
    - `SHOPIFY_APP_CLIENT_SECRET` = el `shpss_...` del paso 1
    - `ALLOWED_ORIGIN` = `https://nidohogar-peru.myshopify.com` (o tu dominio
      propio si usas uno, ej. `https://www.nidohogar.pe`)
-   - Opcionales (ya traen default en el código): `MONTO_ADELANTO`,
-     `YAPE_NUMERO`, `YAPE_TITULAR`.
+   - `YAPE_NUMERO` y `YAPE_TITULAR` = tus datos reales de Yape (obligatorios,
+     sin default en el código — antes vivían hardcodeados en el repo público,
+     ahora se configuran solo aquí).
+   - `CHECKOUT_SHARED_SECRET` = un valor largo y aleatorio que solo tú
+     conoces. Protege el endpoint para que nadie más pueda llamarlo
+     directamente y crear órdenes falsas — ver nota de seguridad abajo.
+   - Opcional (ya trae default en el código): `MONTO_ADELANTO`.
 4. Despliega. Tu endpoint quedará en algo como:
    `https://nido-hogar-checkout-backend.vercel.app/api/crear-pedido`
 
@@ -111,4 +116,18 @@ para que el stock y tus reportes queden limpios.
   repositorio del tema.
 - El endpoint valida los datos recibidos antes de tocar la Admin API — no confía
   ciegamente en lo que mande el frontend.
-- CORS está restringido al dominio configurado en `ALLOWED_ORIGIN`.
+- CORS está restringido al dominio configurado en `ALLOWED_ORIGIN`, pero eso
+  **no es autenticación real**: solo bloquea llamadas hechas desde JS de otro
+  sitio en un navegador, no un POST directo (curl, Postman, un script) contra
+  la URL del endpoint. Por eso existe `CHECKOUT_SHARED_SECRET`:
+  - Configúralo en Vercel con un valor largo y aleatorio.
+  - Haz que la sección del tema envíe ese mismo valor en cada request como
+    header `X-Checkout-Token`.
+  - Mientras la variable no esté configurada en Vercel, el endpoint sigue
+    aceptando requests sin el header (para no romper el checkout mientras
+    actualizas el tema) — configúrala en cuanto el tema esté actualizado.
+- Para evitar pedidos duplicados por doble clic o reintento de red, el
+  frontend puede mandar un `idempotencyKey` (string, hasta 80 caracteres,
+  solo letras/números/`-`/`_`) generado una vez por intento de checkout
+  (ej. un UUID). Si dos requests llegan con la misma key, la segunda devuelve
+  la orden ya creada (`deduped: true`) en vez de crear una nueva.

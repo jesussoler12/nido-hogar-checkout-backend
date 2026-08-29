@@ -11,7 +11,13 @@
 
 const SHOPIFY_API_VERSION = '2026-07';
 
-const REQUIRED_ENV = ['SHOPIFY_STORE_DOMAIN', 'SHOPIFY_APP_CLIENT_ID', 'SHOPIFY_APP_CLIENT_SECRET'];
+const REQUIRED_ENV = [
+  'SHOPIFY_STORE_DOMAIN',
+  'SHOPIFY_APP_CLIENT_ID',
+  'SHOPIFY_APP_CLIENT_SECRET',
+  'YAPE_NUMERO',
+  'YAPE_TITULAR',
+];
 
 // Las apps creadas en el Dev Dashboard de Shopify no entregan un Admin API
 // token estático: el token se obtiene vía "client credentials grant" y
@@ -55,11 +61,23 @@ const METODO_SALDO_LABELS = {
   pos: 'POS (tarjeta en puerta)',
 };
 
+// Sin esto, cualquiera con la URL del endpoint puede crear órdenes reales
+// (y descontar stock real) llamando directo por fuera del navegador — CORS
+// solo bloquea llamadas hechas desde JS de otro sitio, no un POST directo
+// con curl/Postman. Si CHECKOUT_SHARED_SECRET no está configurada, el
+// endpoint queda como antes (sin exigir el header) para no romper el
+// checkout mientras el tema todavía no envía el header.
+function isAuthorized(req) {
+  const expected = process.env.CHECKOUT_SHARED_SECRET;
+  if (!expected) return true;
+  return req.headers['x-checkout-token'] === expected;
+}
+
 function setCors(res) {
   const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Checkout-Token');
 }
 
 function money(n) {
@@ -152,7 +170,34 @@ function validatePayload(body) {
     }
   }
 
+  if (body.idempotencyKey !== undefined) {
+    if (typeof body.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(body.idempotencyKey)) {
+      errors.push('idempotencyKey debe ser una cadena de hasta 80 caracteres (letras, números, "-" o "_").');
+    }
+  }
+
   return errors;
+}
+
+// Permite al frontend reintentar (doble clic, red inestable) sin crear dos
+// órdenes reales: si ya existe una orden con este tag, se devuelve esa en
+// vez de crear una nueva. La key solo pasa por aquí después de validarse en
+// validatePayload contra un charset fijo, para no poder alterar la búsqueda.
+function idempotencyTag(key) {
+  return `idem-${key}`;
+}
+
+async function findOrderByIdempotencyKey(key) {
+  const data = await shopifyGraphql(
+    `query OrdersByTag($query: String!) {
+      orders(first: 1, query: $query) {
+        edges { node { id name } }
+      }
+    }`,
+    { query: `tag:'${idempotencyTag(key)}'` }
+  );
+  const edge = data.orders.edges[0];
+  return edge ? edge.node : null;
 }
 
 module.exports = async (req, res) => {
@@ -165,6 +210,11 @@ module.exports = async (req, res) => {
 
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'Método no permitido. Usa POST.' });
+    return;
+  }
+
+  if (!isAuthorized(req)) {
+    res.status(401).json({ ok: false, error: 'No autorizado.' });
     return;
   }
 
@@ -205,8 +255,8 @@ module.exports = async (req, res) => {
   } = body;
 
   const montoAdelanto = Number(process.env.MONTO_ADELANTO || 10);
-  const yapeNumero = process.env.YAPE_NUMERO || '955083551';
-  const yapeTitular = process.env.YAPE_TITULAR || 'Jesus Soler Huanca De La Cruz';
+  const yapeNumero = process.env.YAPE_NUMERO;
+  const yapeTitular = process.env.YAPE_TITULAR;
 
   const lineItems = items.map((item) => ({
     variantId: toVariantGid(item.variantId),
@@ -229,12 +279,32 @@ module.exports = async (req, res) => {
 
   const phoneE164 = toE164Peru(cliente.celular);
 
+  const tags = ['Contra Entrega con Reserva'];
+  if (body.idempotencyKey) {
+    try {
+      const existingOrder = await findOrderByIdempotencyKey(body.idempotencyKey);
+      if (existingOrder) {
+        res.status(200).json({
+          ok: true,
+          order_id: existingOrder.id,
+          order_number: existingOrder.name,
+          deduped: true,
+        });
+        return;
+      }
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message || 'Error verificando pedidos existentes.' });
+      return;
+    }
+    tags.push(idempotencyTag(body.idempotencyKey));
+  }
+
   const draftOrderInput = {
     lineItems,
     email: cliente.email || undefined,
     phone: phoneE164,
     note: `Pedido Contra Entrega con Reserva. Total: ${money(total)}. Adelanto: ${money(montoAdelanto)}. Saldo en puerta: ${money(saldoRestante)}.`,
-    tags: ['Contra Entrega con Reserva'],
+    tags,
     customAttributes,
     paymentTerms: {
       paymentTermsTemplateId: PAYMENT_TERMS_TEMPLATE_ID_DUE_ON_FULFILLMENT,
