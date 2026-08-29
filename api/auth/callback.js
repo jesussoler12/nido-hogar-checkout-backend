@@ -1,4 +1,4 @@
-// GET /api/auth-callback
+// GET /api/auth/callback
 //
 // Contraparte de api/install.js: recibe el código de autorización que
 // Shopify manda de vuelta, lo canjea por un Admin API access token offline
@@ -59,7 +59,7 @@ module.exports = async (req, res) => {
 Instalación completa para ${shop}.
 
 Copia este token y pégalo en Vercel como SHOPIFY_ADMIN_TOKEN, luego redespliega.
-Después de confirmar que funciona, borra api/install.js y api/auth-callback.js de este repo.
+Después de confirmar que funciona, borra api/install.js y api/auth/callback.js de este repo.
 
 Access token:
 ${data.access_token}
