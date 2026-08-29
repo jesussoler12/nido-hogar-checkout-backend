@@ -13,49 +13,10 @@ const SHOPIFY_API_VERSION = '2026-07';
 
 const REQUIRED_ENV = [
   'SHOPIFY_STORE_DOMAIN',
-  'SHOPIFY_APP_CLIENT_ID',
-  'SHOPIFY_APP_CLIENT_SECRET',
+  'SHOPIFY_ADMIN_TOKEN',
   'YAPE_NUMERO',
   'YAPE_TITULAR',
 ];
-
-// Las apps creadas en el Dev Dashboard de Shopify no entregan un Admin API
-// token estático: el token se obtiene vía "client credentials grant" y
-// expira a las 24h (expires_in). Se cachea en memoria dentro de la misma
-// instancia de la función serverless y se renueva un poco antes de expirar,
-// en vez de pedir uno nuevo en cada request.
-let cachedToken = null;
-let cachedTokenExpiresAt = 0;
-
-async function getAccessToken() {
-  const now = Date.now();
-  if (cachedToken && now < cachedTokenExpiresAt) {
-    return cachedToken;
-  }
-
-  const domain = process.env.SHOPIFY_STORE_DOMAIN;
-  const response = await fetch(`https://${domain}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_id: process.env.SHOPIFY_APP_CLIENT_ID,
-      client_secret: process.env.SHOPIFY_APP_CLIENT_SECRET,
-      grant_type: 'client_credentials',
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `No se pudo obtener el token de Admin API (domain=${domain}, client_id=${process.env.SHOPIFY_APP_CLIENT_ID}): ${text.slice(0, 300)}`
-    );
-  }
-
-  const data = await response.json();
-  cachedToken = data.access_token;
-  cachedTokenExpiresAt = now + (data.expires_in - 300) * 1000; // renovar 5 min antes
-  return cachedToken;
-}
 
 const METODO_SALDO_LABELS = {
   efectivo: 'Efectivo',
@@ -111,14 +72,13 @@ const PAYMENT_TERMS_TEMPLATE_ID_DUE_ON_FULFILLMENT = 'gid://shopify/PaymentTerms
 
 async function shopifyGraphql(query, variables) {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
-  const token = await getAccessToken();
   const url = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': token,
+      'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_TOKEN,
     },
     body: JSON.stringify({ query, variables }),
   });

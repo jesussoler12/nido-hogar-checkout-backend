@@ -5,30 +5,35 @@ crea una **orden real** en Shopify vía Admin API (Draft Orders → completar) y
 devuelve el número de orden para que el frontend abra WhatsApp con el mensaje
 pre-armado.
 
-## 1. Crear la app en el Dev Dashboard de Shopify (para obtener Client ID/Secret)
+## 1. Crear la Custom App en Shopify (para obtener el Admin API token)
 
-Este backend **no** usa el token estático de una Custom App del Admin
-(`shpat_...`). Usa una app creada en el **Dev Dashboard** de Shopify
-(`dev.shopify.com`), autenticándose vía OAuth "client credentials grant"
-(ver `getAccessToken` en `api/crear-pedido.js`), porque ese tipo de app no
-entrega un token fijo: el backend pide uno nuevo automáticamente cada vez
-que expira (24h).
+Este backend usa una **Custom App creada directamente en el Admin de tu
+tienda**, con un token de Admin API fijo (`shpat_...`) — no expira y no
+requiere ningún flujo OAuth.
 
-1. Entra a [dev.shopify.com](https://dev.shopify.com) y crea (o abre) tu app,
-   ej. `Nido Hogar — Checkout COD`.
-2. En **Configuración de la app**, asegúrate de que los Admin API scopes
-   incluyan:
+**Importante:** no uses una app del Dev Dashboard (`dev.shopify.com`) con
+"client credentials grant" — ese mecanismo **solo funciona con tiendas de
+desarrollo dentro de tu misma organización de Partners**, no con tu tienda
+real (`nidohogar-peru.myshopify.com`). Es la causa exacta del error
+`application_cannot_be_found` si lo intentas — ver la nota de Shopify:
+["Acting on another organization's stores"](https://shopify.dev/docs/apps/build/authentication-authorization/client-credentials-grant).
+
+1. En el Admin de Shopify: **Configuración → Apps y canales de venta →
+   Desarrollar apps**.
+2. Si es la primera vez, habilita "Permitir desarrollo de apps
+   personalizadas".
+3. **Crear una app** → dale un nombre, ej. `Nido Hogar — Checkout COD`.
+4. Pestaña **Configuración de API** → **Configurar Admin API scopes** y
+   marca:
    - `write_draft_orders`
    - `read_draft_orders`
    - `write_orders`
    - `read_orders`
    - `write_payment_terms` (opcional pero recomendado — ver nota abajo)
-3. Instala la app en tu tienda (`nidohogar-peru.myshopify.com`) si aún no lo
-   está.
-4. En **Credenciales de cliente** copia el **Client ID** y el **Client
-   secret** (este último empieza con `shpss_...`). Son tu
-   `SHOPIFY_APP_CLIENT_ID` y `SHOPIFY_APP_CLIENT_SECRET` — no los confundas
-   con claves de otros servicios (ej. Stripe, que empiezan con `sk_live_`).
+5. **Guardar**, luego pestaña **Credenciales de API** → **Instalar app**.
+6. Copia el **Admin API access token** (empieza con `shpat_...`) — solo se
+   muestra una vez. Ese es tu `SHOPIFY_ADMIN_TOKEN` — no lo confundas con
+   claves de otros servicios (ej. Stripe, que empiezan con `sk_live_`).
 
 ### Nota importante sobre el estado de pago de la orden
 
@@ -52,8 +57,7 @@ que el estado de pago sea el correcto, agrega ese scope al crear la Custom App.
 3. Antes de desplegar (o después, en **Settings → Environment Variables**),
    agrega:
    - `SHOPIFY_STORE_DOMAIN` = `nidohogar-peru.myshopify.com`
-   - `SHOPIFY_APP_CLIENT_ID` = el Client ID del paso 1
-   - `SHOPIFY_APP_CLIENT_SECRET` = el `shpss_...` del paso 1
+   - `SHOPIFY_ADMIN_TOKEN` = el `shpat_...` del paso 1
    - `ALLOWED_ORIGIN` = `https://nidohogar-peru.myshopify.com` (o tu dominio
      propio si usas uno, ej. `https://www.nidohogar.pe`)
    - `YAPE_NUMERO` y `YAPE_TITULAR` = tus datos reales de Yape (obligatorios,
@@ -110,10 +114,9 @@ para que el stock y tus reportes queden limpios.
 
 ## Notas de seguridad
 
-- `SHOPIFY_APP_CLIENT_ID` y, sobre todo, `SHOPIFY_APP_CLIENT_SECRET` viven
-  **solo** en las variables de entorno de Vercel. Nunca los pongas en el
-  tema, en `settings_data.json`, ni en ningún archivo que se suba al
-  repositorio del tema.
+- `SHOPIFY_ADMIN_TOKEN` vive **solo** en las variables de entorno de Vercel.
+  Nunca lo pongas en el tema, en `settings_data.json`, ni en ningún archivo
+  que se suba al repositorio del tema.
 - El endpoint valida los datos recibidos antes de tocar la Admin API — no confía
   ciegamente en lo que mande el frontend.
 - CORS está restringido al dominio configurado en `ALLOWED_ORIGIN`, pero eso
