@@ -1,4 +1,4 @@
-# Nido Hogar — Backend Contra Entrega con Reserva
+# Nido Hogar — Backend Contra Entrega
 
 Backend serverless (Vercel) que recibe el pedido armado desde el tema de Shopify,
 crea una **orden real** en Shopify vía Admin API (Draft Orders → completar) y
@@ -60,13 +60,9 @@ que el estado de pago sea el correcto, agrega ese scope al crear la Custom App.
    - `SHOPIFY_ADMIN_TOKEN` = el `shpat_...` del paso 1
    - `ALLOWED_ORIGIN` = `https://nidohogar-peru.myshopify.com` (o tu dominio
      propio si usas uno, ej. `https://www.nidohogar.pe`)
-   - `YAPE_NUMERO` y `YAPE_TITULAR` = tus datos reales de Yape (obligatorios,
-     sin default en el código — antes vivían hardcodeados en el repo público,
-     ahora se configuran solo aquí).
    - `CHECKOUT_SHARED_SECRET` = un valor largo y aleatorio que solo tú
      conoces. Protege el endpoint para que nadie más pueda llamarlo
      directamente y crear órdenes falsas — ver nota de seguridad abajo.
-   - Opcional (ya trae default en el código): `MONTO_ADELANTO`.
 4. Despliega. Tu endpoint quedará en algo como:
    `https://nido-hogar-checkout-backend.vercel.app/api/crear-pedido`
 
@@ -85,7 +81,7 @@ En el editor de temas, abre esa página → sección "Nido Checkout COD" →
 3. Llena el formulario y presiona "Finalizar pedido".
 4. Si todo sale bien: se abre WhatsApp con el mensaje armado, y en el Admin de
    Shopify → Pedidos aparece la orden real con los atributos personalizados
-   (Tipo, Adelanto Requerido, Titular Yape, etc.) visibles en el detalle del
+   (Tipo, Total por Cobrar en Puerta, etc.) visibles en el detalle del
    pedido, y el stock del producto descontado.
 
 ### Ya se probó el flujo completo contra tu tienda real
@@ -98,9 +94,9 @@ confirmar que Shopify acepta la estructura exacta del pedido:
 - Se creó y completó una orden real de prueba: **pedido `#1002`**, sobre el
   producto "Soporte de Baño para Bebé" (1 unidad, de 200 en stock).
 - Se confirmó en el pedido resultante: `customAttributes` correctos
-  (Tipo, Adelanto Requerido, Titular Yape, Saldo por Cobrar en Puerta, Metodo
-  Saldo, Paga con Billete, Vuelto a Llevar, Referencia Entrega), dirección de
-  envío, teléfono, y **descuento real de stock** (200 → 199 unidades).
+  (Tipo, Total por Cobrar en Puerta, Metodo de Pago, Paga con Billete, Vuelto
+  Requerido, Referencia Entrega), dirección de envío, teléfono, y
+  **descuento real de stock** (200 → 199 unidades).
 - Esa prueba fue la que reveló los dos problemas ya corregidos en el código:
   el formato de teléfono (Shopify exige `+51987654321`, no `987654321`) y el
   estado de pago "Paid" por defecto (ver nota arriba).

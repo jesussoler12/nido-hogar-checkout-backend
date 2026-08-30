@@ -1,21 +1,26 @@
 // POST /api/crear-pedido
 //
-// Recibe el carrito + datos de entrega + método de pago del saldo desde el
-// frontend del tema Shopify, crea un Draft Order real vía Admin API (GraphQL),
-// lo completa (queda como Order real, descuenta stock) y devuelve el número
-// de orden para que el frontend arme el mensaje de WhatsApp.
+// Recibe el carrito + datos de entrega + método de pago desde el frontend del
+// tema Shopify, crea un Draft Order real vía Admin API (GraphQL), lo completa
+// (queda como Order real, descuenta stock) y devuelve el número de orden para
+// que el frontend arme el mensaje de WhatsApp.
 //
-// El pago real (adelanto S/10 por Yape + saldo contra entrega) NUNCA pasa por
-// Shopify Payments: la orden queda con estado de pago "pending" (a cobrar),
-// y todo el rastro de cómo se pagará queda en customAttributes (note attributes).
+// El pago real (contra entrega, íntegro) NUNCA pasa por Shopify Payments: la
+// orden queda con estado de pago "pending" (a cobrar), y todo el rastro de
+// cómo se pagará queda en customAttributes (note attributes).
+
+const crypto = require('crypto');
 
 const SHOPIFY_API_VERSION = '2026-07';
+
+// Pixel ya instalado en el tema (layout/theme.liquid) — no depende de una
+// variable de entorno para poder mandar eventos aunque META_PIXEL_ID no se
+// configure explícitamente en Vercel.
+const DEFAULT_META_PIXEL_ID = '1991488321555698';
 
 const REQUIRED_ENV = [
   'SHOPIFY_STORE_DOMAIN',
   'SHOPIFY_ADMIN_TOKEN',
-  'YAPE_NUMERO',
-  'YAPE_TITULAR',
 ];
 
 const METODO_SALDO_LABELS = {
@@ -66,8 +71,8 @@ function toE164Peru(phone) {
 
 // ID estándar de Shopify para el template de términos de pago "Due on fulfillment"
 // (pagar al recibir). Sin esto, draftOrderComplete marca la orden como "Paid" por
-// defecto, lo cual es incorrecto para este flujo: el adelanto se paga por Yape FUERA
-// de Shopify y el saldo se cobra en la entrega, así que la orden debe quedar pendiente.
+// defecto, lo cual es incorrecto para este flujo: el pago se cobra en la entrega,
+// fuera de Shopify Payments, así que la orden debe quedar pendiente.
 const PAYMENT_TERMS_TEMPLATE_ID_DUE_ON_FULFILLMENT = 'gid://shopify/PaymentTermsTemplate/9';
 
 async function shopifyGraphql(query, variables) {
@@ -110,7 +115,7 @@ function validatePayload(body) {
   }
 
   const cliente = body.cliente || {};
-  ['nombre', 'celular', 'direccion', 'distrito'].forEach((field) => {
+  ['nombre', 'celular', 'direccion', 'distrito', 'ciudad'].forEach((field) => {
     if (!cliente[field] || !String(cliente[field]).trim()) {
       errors.push(`cliente.${field} es obligatorio.`);
     }
@@ -147,6 +152,74 @@ function validatePayload(body) {
 // validatePayload contra un charset fijo, para no poder alterar la búsqueda.
 function idempotencyTag(key) {
   return `idem-${key}`;
+}
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value).trim().toLowerCase()).digest('hex');
+}
+
+// Meta cuenta con el pixel del navegador para "PageView", pero como esta
+// tienda cobra contra entrega, el pedido NUNCA pasa por el checkout nativo
+// de Shopify — que es donde normalmente se dispara la conversión "Purchase"
+// hacia Meta. Sin esto, Meta ve clics pero nunca compras (ROAS 0.00) aunque
+// sí las haya. Se manda servidor-a-servidor (Conversions API) en vez de solo
+// el pixel del navegador porque no depende de que el cliente tenga bloqueado
+// el pixel/cookies de terceros, y porque el pago contra entrega no tiene un
+// evento de "checkout completado" real en el navegador al que engancharse.
+//
+// Nunca debe poder romper la creación del pedido: cualquier error de red o
+// de la API de Meta se registra pero se ignora — el pedido en Shopify ya
+// quedó creado, que es lo crítico.
+async function sendMetaPurchaseEvent({ req, order, cliente, phoneE164, total, fbp, fbc }) {
+  const accessToken = process.env.META_CAPI_TOKEN;
+  if (!accessToken) return;
+
+  const pixelId = process.env.META_PIXEL_ID || DEFAULT_META_PIXEL_ID;
+  const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const clientIp = forwardedFor || req.socket?.remoteAddress;
+
+  const userData = {
+    ph: [sha256Hex(phoneE164.replace(/\D/g, ''))],
+  };
+  if (cliente.email) userData.em = [sha256Hex(cliente.email)];
+  if (clientIp) userData.client_ip_address = clientIp;
+  if (req.headers['user-agent']) userData.client_user_agent = req.headers['user-agent'];
+  if (fbp) userData.fbp = fbp;
+  if (fbc) userData.fbc = fbc;
+
+  const payload = {
+    data: [
+      {
+        event_name: 'Purchase',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: order.name,
+        action_source: 'website',
+        event_source_url: 'https://nidohogar-peru.myshopify.com',
+        user_data: userData,
+        custom_data: {
+          currency: 'PEN',
+          value: Number(total),
+          order_id: order.name,
+          content_type: 'product',
+        },
+      },
+    ],
+    access_token: accessToken,
+  };
+
+  try {
+    const response = await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Meta CAPI respondió con error:', response.status, errText);
+    }
+  } catch (err) {
+    console.error('Meta CAPI: fallo de red al enviar el evento Purchase:', err.message);
+  }
 }
 
 async function findOrderByIdempotencyKey(key) {
@@ -211,14 +284,10 @@ module.exports = async (req, res) => {
     cliente,
     metodoSaldo,
     billete,
-    total,
     saldoRestante,
     vuelto,
+    bono,
   } = body;
-
-  const montoAdelanto = Number(process.env.MONTO_ADELANTO || 10);
-  const yapeNumero = process.env.YAPE_NUMERO;
-  const yapeTitular = process.env.YAPE_TITULAR;
 
   const lineItems = items.map((item) => ({
     variantId: toVariantGid(item.variantId),
@@ -228,20 +297,26 @@ module.exports = async (req, res) => {
   const DESTINO_LABELS = { lima: 'Lima Metropolitana', provincia: 'Provincias' };
 
   const customAttributes = [
-    { key: 'Tipo', value: 'Contra Entrega con Reserva' },
-    { key: 'Adelanto Requerido', value: `${money(montoAdelanto)} (Yape/Plin)` },
-    { key: 'Titular Yape', value: `${yapeTitular} (${yapeNumero})` },
-    { key: 'Saldo por Cobrar en Puerta', value: money(saldoRestante) },
-    { key: 'Metodo de Saldo', value: METODO_SALDO_LABELS[metodoSaldo] },
+    { key: 'Tipo', value: 'Contra Entrega' },
+    { key: 'Distrito', value: cliente.distrito },
+    { key: 'Total por Cobrar en Puerta', value: money(saldoRestante) },
+    { key: 'Metodo de Pago', value: METODO_SALDO_LABELS[metodoSaldo] },
     { key: 'Paga con Billete', value: metodoSaldo === 'efectivo' ? money(billete) : 'N/A' },
     { key: 'Vuelto Requerido', value: metodoSaldo === 'efectivo' ? money(vuelto || 0) : 'N/A' },
     { key: 'Destino de Envio', value: DESTINO_LABELS[body.destino] || 'Lima Metropolitana' },
     { key: 'Referencia Entrega', value: cliente.referencia || '' },
   ];
 
+  // "Prueba tu suerte" del checkout ya restó este bono del total antes de
+  // llegar aquí (saldoRestante ya viene neto) — esto es solo para que quede
+  // trazable en el pedido por qué el monto es menor al de catálogo.
+  if (Number(bono) > 0) {
+    customAttributes.push({ key: 'Bono Sorpresa', value: money(Number(bono)) });
+  }
+
   const phoneE164 = toE164Peru(cliente.celular);
 
-  const tags = ['Contra Entrega con Reserva'];
+  const tags = ['Contra Entrega'];
   if (body.idempotencyKey) {
     try {
       const existingOrder = await findOrderByIdempotencyKey(body.idempotencyKey);
@@ -265,17 +340,21 @@ module.exports = async (req, res) => {
     lineItems,
     email: cliente.email || undefined,
     phone: phoneE164,
-    note: `Pedido Contra Entrega con Reserva. Total: ${money(total)}. Adelanto: ${money(montoAdelanto)}. Saldo en puerta: ${money(saldoRestante)}.`,
+    note: `Pedido Contra Entrega. Total a cobrar en puerta: ${money(saldoRestante)}.`,
     tags,
     customAttributes,
     paymentTerms: {
       paymentTermsTemplateId: PAYMENT_TERMS_TEMPLATE_ID_DUE_ON_FULFILLMENT,
     },
+    // Antes "city" recibía el distrito (ej. "Miraflores"), que Shopify no
+    // reconoce como ciudad/zona de envío real — de ahí que "no reconociera
+    // bien la ubicación". Ahora "city" lleva la ciudad real (ej. "Lima") y
+    // el distrito va en address2, junto con la referencia si existe.
     shippingAddress: {
       firstName: cliente.nombre,
       address1: cliente.direccion,
-      address2: cliente.referencia || undefined,
-      city: cliente.distrito,
+      address2: [cliente.distrito, cliente.referencia].filter(Boolean).join(' - ') || undefined,
+      city: cliente.ciudad,
       countryCode: 'PE',
       phone: phoneE164,
     },
@@ -350,6 +429,16 @@ module.exports = async (req, res) => {
       });
       return;
     }
+
+    await sendMetaPurchaseEvent({
+      req,
+      order,
+      cliente,
+      phoneE164,
+      total: body.total,
+      fbp: body.fbp,
+      fbc: body.fbc,
+    });
 
     res.status(200).json({
       ok: true,

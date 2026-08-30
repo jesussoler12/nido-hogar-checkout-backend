@@ -2,7 +2,7 @@
   "name": "nido-hogar-checkout-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Backend serverless (Vercel) que crea órdenes reales en Shopify para el flujo Contra Entrega con Reserva de Nido Hogar.",
+  "description": "Backend serverless (Vercel) que crea órdenes reales en Shopify para el flujo Contra Entrega de Nido Hogar.",
   "engines": {
     "node": ">=18"
   },
