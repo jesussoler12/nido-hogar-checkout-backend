@@ -287,6 +287,8 @@ module.exports = async (req, res) => {
     saldoRestante,
     vuelto,
     bono,
+    luckBono,
+    exitBono,
   } = body;
 
   const lineItems = items.map((item) => ({
@@ -296,23 +298,54 @@ module.exports = async (req, res) => {
 
   const DESTINO_LABELS = { lima: 'Lima Metropolitana', provincia: 'Provincias' };
 
+  // El precio de catálogo (línea de producto) siempre es el íntegro — el bono
+  // del dado y/o el descuento de la oferta de salida se restan aparte (ver
+  // draftOrderInput.appliedDiscount más abajo), así que "de dónde sale" el
+  // total menor no es obvio con solo ver el pedido. Se calcula aquí el
+  // desglose completo (precio catálogo, cada bono por separado, total final)
+  // para que quede sin ambigüedad en la Nota Y en customAttributes cuánto
+  // cobrar de verdad en la puerta — a pedido explícito, tras confirmar que un
+  // pedido sin bono (Total = Total a Cobrar) se podía confundir con "no
+  // registra el descuento" cuando en realidad simplemente no hubo descuento.
+  const bonoTotal = Number(bono) || 0;
+  const luckBonoNum = Number(luckBono) || 0;
+  const exitBonoNum = Number(exitBono) || 0;
+  const precioCatalogo = Number(saldoRestante) + bonoTotal;
+
   const customAttributes = [
     { key: 'Tipo', value: 'Contra Entrega' },
     { key: 'Distrito', value: cliente.distrito },
-    { key: 'Total por Cobrar en Puerta', value: money(saldoRestante) },
+    { key: 'Precio Catalogo', value: money(precioCatalogo) },
+  ];
+  if (luckBonoNum > 0) {
+    customAttributes.push({ key: 'Bono Prueba tu Suerte (dado)', value: '-' + money(luckBonoNum) });
+  }
+  if (exitBonoNum > 0) {
+    customAttributes.push({ key: 'Descuento Oferta de Salida', value: '-' + money(exitBonoNum) });
+  }
+  if (bonoTotal > 0 && luckBonoNum === 0 && exitBonoNum === 0) {
+    // Compatibilidad: pedidos de una versión anterior del frontend que solo
+    // mandaba el total combinado sin distinguir la fuente.
+    customAttributes.push({ key: 'Bono Sorpresa', value: '-' + money(bonoTotal) });
+  }
+  customAttributes.push(
+    { key: 'TOTAL A COBRAR EN LA PUERTA', value: money(saldoRestante) },
     { key: 'Metodo de Pago', value: METODO_SALDO_LABELS[metodoSaldo] },
     { key: 'Paga con Billete', value: metodoSaldo === 'efectivo' ? money(billete) : 'N/A' },
     { key: 'Vuelto Requerido', value: metodoSaldo === 'efectivo' ? money(vuelto || 0) : 'N/A' },
     { key: 'Destino de Envio', value: DESTINO_LABELS[body.destino] || 'Lima Metropolitana' },
     { key: 'Referencia Entrega', value: cliente.referencia || '' },
-  ];
+  );
 
-  // "Prueba tu suerte" del checkout ya restó este bono del total antes de
-  // llegar aquí (saldoRestante ya viene neto) — esto es solo para que quede
-  // trazable en el pedido por qué el monto es menor al de catálogo.
-  if (Number(bono) > 0) {
-    customAttributes.push({ key: 'Bono Sorpresa', value: money(Number(bono)) });
+  const noteLines = ['Pedido Contra Entrega.'];
+  if (bonoTotal > 0) {
+    noteLines.push(`Precio catálogo: ${money(precioCatalogo)}`);
+    if (luckBonoNum > 0) noteLines.push(`Bono "Prueba tu suerte" 🎲: -${money(luckBonoNum)}`);
+    if (exitBonoNum > 0) noteLines.push(`Descuento oferta de salida 🎁: -${money(exitBonoNum)}`);
+    if (luckBonoNum === 0 && exitBonoNum === 0) noteLines.push(`Bono aplicado: -${money(bonoTotal)}`);
   }
+  noteLines.push(`>>> TOTAL A COBRAR EN LA PUERTA: ${money(saldoRestante)} <<<`);
+  const orderNote = noteLines.join('\n');
 
   const phoneE164 = toE164Peru(cliente.celular);
 
@@ -340,7 +373,7 @@ module.exports = async (req, res) => {
     lineItems,
     email: cliente.email || undefined,
     phone: phoneE164,
-    note: `Pedido Contra Entrega. Total a cobrar en puerta: ${money(saldoRestante)}.`,
+    note: orderNote,
     tags,
     customAttributes,
     paymentTerms: {
@@ -359,6 +392,24 @@ module.exports = async (req, res) => {
       phone: phoneE164,
     },
   };
+
+  // Sin esto, el bono/descuento solo quedaba anotado como texto (nota +
+  // customAttributes) pero el "Total"/"Pagado" que Shopify muestra arriba
+  // del pedido seguía siendo el precio de catálogo íntegro — a simple vista
+  // parecía que no hubo descuento y se podía cobrar de más en la puerta. Al
+  // aplicar un descuento REAL a nivel de pedido, el Total oficial de Shopify
+  // ya coincide con "TOTAL A COBRAR EN LA PUERTA".
+  if (bonoTotal > 0) {
+    const discountParts = [];
+    if (luckBonoNum > 0) discountParts.push(`Prueba tu suerte: -${money(luckBonoNum)}`);
+    if (exitBonoNum > 0) discountParts.push(`Oferta de salida: -${money(exitBonoNum)}`);
+    draftOrderInput.appliedDiscount = {
+      value: bonoTotal,
+      valueType: 'FIXED_AMOUNT',
+      title: 'Bono / descuento del checkout',
+      description: discountParts.length > 0 ? discountParts.join(' · ') : `Bono aplicado: -${money(bonoTotal)}`,
+    };
+  }
 
   const CREATE_DRAFT_ORDER_MUTATION = `mutation CreateDraftOrder($input: DraftOrderInput!) {
     draftOrderCreate(input: $input) {
