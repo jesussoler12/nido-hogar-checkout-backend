@@ -313,25 +313,34 @@ module.exports = async (req, res) => {
   // probar código 15% + dado + oferta de salida juntos: el Total de Shopify
   // no coincidía con "TOTAL A COBRAR EN LA PUERTA". Por eso se consulta el
   // precio real de cada variante antes de crear el pedido.
-  const variantGids = items.map((item) => toVariantGid(item.variantId));
-  const variantPricesData = await shopifyGraphql(
-    `query VariantPrices($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on ProductVariant { id price }
-      }
-    }`,
-    { ids: variantGids }
-  );
-  const priceByVariantId = {};
-  (variantPricesData.nodes || []).forEach((node) => {
-    if (node && node.id) priceByVariantId[node.id] = Number(node.price);
-  });
-  const catalogSubtotal = items.reduce((sum, item, i) => {
-    const price = priceByVariantId[variantGids[i]] || 0;
-    return sum + price * item.quantity;
-  }, 0);
-
   const bonoTotal = Number(bono) || 0;
+  // Aproximación de respaldo (no distingue código de descuento vs bono) por
+  // si la consulta de precios reales falla — un pedido con un desglose
+  // menos preciso es muchísimo mejor que un pedido que no se crea.
+  let catalogSubtotal = Number(saldoRestante) + bonoTotal;
+  try {
+    const variantGids = items.map((item) => toVariantGid(item.variantId));
+    const variantPricesData = await shopifyGraphql(
+      `query VariantPrices($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant { id price }
+        }
+      }`,
+      { ids: variantGids }
+    );
+    const priceByVariantId = {};
+    (variantPricesData.nodes || []).forEach((node) => {
+      if (node && node.id) priceByVariantId[node.id] = Number(node.price);
+    });
+    const computedSubtotal = items.reduce((sum, item, i) => {
+      const price = priceByVariantId[variantGids[i]];
+      return price != null && Number.isFinite(price) ? sum + price * item.quantity : sum;
+    }, 0);
+    if (computedSubtotal > 0) catalogSubtotal = computedSubtotal;
+  } catch (err) {
+    console.error('No se pudo consultar el precio real de catálogo (usando aproximación):', err.message);
+  }
+
   const luckBonoNum = Number(luckBono) || 0;
   const exitBonoNum = Number(exitBono) || 0;
   // Brecha total entre catálogo y lo que el cliente realmente debe pagar —
