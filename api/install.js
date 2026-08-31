@@ -16,7 +16,7 @@ module.exports = (req, res) => {
     return;
   }
 
-  const scopes = 'write_draft_orders,read_draft_orders,write_orders,read_orders,write_payment_terms';
+  const scopes = 'write_draft_orders,read_draft_orders,write_orders,read_orders,write_payment_terms,read_products';
   const redirectUri = `https://${req.headers.host}/api/auth/callback`;
 
   const authUrl =
