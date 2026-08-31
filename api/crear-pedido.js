@@ -298,25 +298,58 @@ module.exports = async (req, res) => {
 
   const DESTINO_LABELS = { lima: 'Lima Metropolitana', provincia: 'Provincias' };
 
-  // El precio de catálogo (línea de producto) siempre es el íntegro — el bono
-  // del dado y/o el descuento de la oferta de salida se restan aparte (ver
-  // draftOrderInput.appliedDiscount más abajo), así que "de dónde sale" el
-  // total menor no es obvio con solo ver el pedido. Se calcula aquí el
-  // desglose completo (precio catálogo, cada bono por separado, total final)
-  // para que quede sin ambigüedad en la Nota Y en customAttributes cuánto
-  // cobrar de verdad en la puerta — a pedido explícito, tras confirmar que un
-  // pedido sin bono (Total = Total a Cobrar) se podía confundir con "no
-  // registra el descuento" cuando en realidad simplemente no hubo descuento.
+  // El "saldoRestante"/"total" que manda el frontend ya viene neto de TODO:
+  // el % que Shopify calculó si el cliente aplicó un código de descuento real
+  // (ej. BIENVENIDO15, vía /cart/update.js, código nativo de Shopify — no lo
+  // sabe este backend) MÁS el bono del dado y/o de la oferta de salida
+  // (variables propias del checkout, esas sí las manda el frontend por
+  // separado). Para poder aplicar UN SOLO descuento real al pedido que cierre
+  // exactamente esa brecha — sin importar de qué fuente viene — hace falta
+  // saber el precio de catálogo VERDADERO (antes de cualquier descuento), y
+  // no se puede confiar en el frontend para ese número: si solo se restaban
+  // los bonos (como en la primera versión de este fix) y había además un
+  // código de descuento aplicado, el pedido real de Shopify se quedaba a
+  // mitad de camino (con el código sin aplicar) — el bug que se detectó al
+  // probar código 15% + dado + oferta de salida juntos: el Total de Shopify
+  // no coincidía con "TOTAL A COBRAR EN LA PUERTA". Por eso se consulta el
+  // precio real de cada variante antes de crear el pedido.
+  const variantGids = items.map((item) => toVariantGid(item.variantId));
+  const variantPricesData = await shopifyGraphql(
+    `query VariantPrices($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant { id price }
+      }
+    }`,
+    { ids: variantGids }
+  );
+  const priceByVariantId = {};
+  (variantPricesData.nodes || []).forEach((node) => {
+    if (node && node.id) priceByVariantId[node.id] = Number(node.price);
+  });
+  const catalogSubtotal = items.reduce((sum, item, i) => {
+    const price = priceByVariantId[variantGids[i]] || 0;
+    return sum + price * item.quantity;
+  }, 0);
+
   const bonoTotal = Number(bono) || 0;
   const luckBonoNum = Number(luckBono) || 0;
   const exitBonoNum = Number(exitBono) || 0;
-  const precioCatalogo = Number(saldoRestante) + bonoTotal;
+  // Brecha total entre catálogo y lo que el cliente realmente debe pagar —
+  // cubre bonos Y cualquier código de descuento aplicado, sin necesitar que
+  // el frontend mande el código o su monto por separado.
+  const descuentoTotal = Math.max(catalogSubtotal - Number(saldoRestante), 0);
+  // Lo que no explican los bonos conocidos es, por descarte, el código de
+  // descuento (o cualquier otro ajuste nativo de Shopify sobre el carrito).
+  const descuentoCodigo = Math.max(descuentoTotal - bonoTotal, 0);
 
   const customAttributes = [
     { key: 'Tipo', value: 'Contra Entrega' },
     { key: 'Distrito', value: cliente.distrito },
-    { key: 'Precio Catalogo', value: money(precioCatalogo) },
+    { key: 'Precio Catalogo', value: money(catalogSubtotal) },
   ];
+  if (descuentoCodigo > 0) {
+    customAttributes.push({ key: 'Codigo de Descuento', value: '-' + money(descuentoCodigo) });
+  }
   if (luckBonoNum > 0) {
     customAttributes.push({ key: 'Bono Prueba tu Suerte (dado)', value: '-' + money(luckBonoNum) });
   }
@@ -338,11 +371,14 @@ module.exports = async (req, res) => {
   );
 
   const noteLines = ['Pedido Contra Entrega.'];
-  if (bonoTotal > 0) {
-    noteLines.push(`Precio catálogo: ${money(precioCatalogo)}`);
+  if (descuentoTotal > 0) {
+    noteLines.push(`Precio catálogo: ${money(catalogSubtotal)}`);
+    if (descuentoCodigo > 0) noteLines.push(`Código de descuento: -${money(descuentoCodigo)}`);
     if (luckBonoNum > 0) noteLines.push(`Bono "Prueba tu suerte" 🎲: -${money(luckBonoNum)}`);
     if (exitBonoNum > 0) noteLines.push(`Descuento oferta de salida 🎁: -${money(exitBonoNum)}`);
-    if (luckBonoNum === 0 && exitBonoNum === 0) noteLines.push(`Bono aplicado: -${money(bonoTotal)}`);
+    if (descuentoCodigo === 0 && luckBonoNum === 0 && exitBonoNum === 0) {
+      noteLines.push(`Descuento aplicado: -${money(descuentoTotal)}`);
+    }
   }
   noteLines.push(`>>> TOTAL A COBRAR EN LA PUERTA: ${money(saldoRestante)} <<<`);
   const orderNote = noteLines.join('\n');
@@ -397,17 +433,21 @@ module.exports = async (req, res) => {
   // customAttributes) pero el "Total"/"Pagado" que Shopify muestra arriba
   // del pedido seguía siendo el precio de catálogo íntegro — a simple vista
   // parecía que no hubo descuento y se podía cobrar de más en la puerta. Al
-  // aplicar un descuento REAL a nivel de pedido, el Total oficial de Shopify
-  // ya coincide con "TOTAL A COBRAR EN LA PUERTA".
-  if (bonoTotal > 0) {
+  // aplicar un descuento REAL a nivel de pedido por `descuentoTotal` (que
+  // cierra la brecha COMPLETA contra catalogSubtotal, código de descuento
+  // incluido — no solo los bonos), el Total oficial de Shopify ya coincide
+  // siempre con "TOTAL A COBRAR EN LA PUERTA", sin importar qué combinación
+  // de descuentos usó el cliente.
+  if (descuentoTotal > 0) {
     const discountParts = [];
+    if (descuentoCodigo > 0) discountParts.push(`Código de descuento: -${money(descuentoCodigo)}`);
     if (luckBonoNum > 0) discountParts.push(`Prueba tu suerte: -${money(luckBonoNum)}`);
     if (exitBonoNum > 0) discountParts.push(`Oferta de salida: -${money(exitBonoNum)}`);
     draftOrderInput.appliedDiscount = {
-      value: bonoTotal,
+      value: descuentoTotal,
       valueType: 'FIXED_AMOUNT',
-      title: 'Bono / descuento del checkout',
-      description: discountParts.length > 0 ? discountParts.join(' · ') : `Bono aplicado: -${money(bonoTotal)}`,
+      title: 'Descuentos del checkout',
+      description: discountParts.length > 0 ? discountParts.join(' · ') : `Descuento aplicado: -${money(descuentoTotal)}`,
     };
   }
 
