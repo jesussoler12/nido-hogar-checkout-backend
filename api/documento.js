@@ -94,6 +94,9 @@ function renderNota(order) {
   const direccion = [order.shippingAddress?.address1, order.shippingAddress?.address2, order.shippingAddress?.city]
     .filter(Boolean).join(', ');
   const metodo = getAttr(order.customAttributes, ['Metodo de Pago'], '—');
+  const billete = getAttr(order.customAttributes, ['Paga con Billete'], 'N/A');
+  const vuelto = getAttr(order.customAttributes, ['Vuelto Requerido'], 'N/A');
+  const esEfectivo = metodo === 'Efectivo';
   const total = order.totalPriceSet.shopMoney.amount;
   const opGravada = (Number(total) / 1.18).toFixed(2);
   const igv = (Number(total) - Number(opGravada)).toFixed(2);
@@ -156,8 +159,14 @@ function renderNota(order) {
       <div class="row"><span>IGV (18%)</span><span>${money(igv)}</span></div>
       <div class="row grand"><span>TOTAL A PAGAR</span><span>${money(total)}</span></div>
     </div>
-    <div class="meta" style="margin-top:8px;"><div class="row"><span class="label">Forma de pago</span><span class="val">${esc(metodo)}</span></div></div>
+    <div class="meta" style="margin-top:8px;">
+      <div class="row"><span class="label">Forma de pago</span><span class="val">${esc(metodo)}</span></div>
+      ${esEfectivo ? `
+      <div class="row"><span class="label">Paga con billete</span><span class="val">${esc(billete)}</span></div>
+      <div class="row"><span class="label">Vuelto a entregar</span><span class="val">${esc(vuelto)}</span></div>` : ''}
+    </div>
   </div>
+  <script>window.onload = function(){ window.print(); };</script>
 </body></html>`;
 }
 
@@ -168,6 +177,9 @@ function renderEtiqueta(order) {
   const distrito = getAttr(order.customAttributes, ['Distrito'], '');
   const referencia = getAttr(order.customAttributes, ['Referencia Entrega'], '');
   const metodo = getAttr(order.customAttributes, ['Metodo de Pago'], '—');
+  const billete = getAttr(order.customAttributes, ['Paga con Billete'], 'N/A');
+  const vuelto = getAttr(order.customAttributes, ['Vuelto Requerido'], 'N/A');
+  const esEfectivo = metodo === 'Efectivo';
   const direccion = order.shippingAddress?.address1 || '';
   const ciudad = order.shippingAddress?.city || 'Lima';
   const total = order.totalPriceSet.shopMoney.amount;
@@ -218,7 +230,7 @@ function renderEtiqueta(order) {
     <div class="cod-box">
       <div class="cod-label">Cobrar contra entrega</div>
       <div class="cod-amount">${money(total)}</div>
-      <div class="cod-method">${esc(metodo)}</div>
+      <div class="cod-method">${esc(metodo)}${esEfectivo ? ` · Recibe ${esc(billete)} · Vuelto ${esc(vuelto)}` : ''}</div>
     </div>
     <div class="items-box">${esc(itemsLine)}</div>
     <div class="footer-row">
@@ -226,6 +238,7 @@ function renderEtiqueta(order) {
       <div class="date">${fecha}</div>
     </div>
   </div>
+  <script>window.onload = function(){ window.print(); };</script>
 </body></html>`;
 }
 
