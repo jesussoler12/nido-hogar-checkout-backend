@@ -378,6 +378,13 @@ module.exports = async (req, res) => {
     { key: 'Destino de Envio', value: DESTINO_LABELS[body.destino] || 'Lima Metropolitana' },
     { key: 'Referencia Entrega', value: cliente.referencia || '' },
   );
+  // Se guardan _fbp/_fbc en el pedido (no solo en memoria) para que el
+  // webhook de "orders/paid" (api/webhooks/order-paid.js) los pueda leer
+  // de vuelta días después, cuando se confirma el pago real, y mandar un
+  // evento de conversión a Meta con mejor calidad de match — esas cookies
+  // ya no existen en ningún navegador para ese entonces.
+  if (body.fbp) customAttributes.push({ key: '_fbp', value: body.fbp });
+  if (body.fbc) customAttributes.push({ key: '_fbc', value: body.fbc });
 
   const noteLines = ['Pedido Contra Entrega.'];
   if (descuentoTotal > 0) {

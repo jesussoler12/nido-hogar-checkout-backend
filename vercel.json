@@ -3,6 +3,9 @@
   "functions": {
     "api/crear-pedido.js": {
       "maxDuration": 15
+    },
+    "api/webhooks/order-paid.js": {
+      "maxDuration": 15
     }
   }
 }
