@@ -9,6 +9,9 @@
     },
     "api/documento.js": {
       "maxDuration": 15
+    },
+    "api/pedidos.js": {
+      "maxDuration": 15
     }
   }
 }
