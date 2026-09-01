@@ -63,7 +63,15 @@ module.exports = async (req, res) => {
   }
 
   const rawBody = await readRawBody(req);
-  const secret = process.env.SHOPIFY_APP_CLIENT_SECRET;
+  // Este webhook se creó desde el Admin (Configuración > Notificaciones >
+  // Webhooks), NO vía la API OAuth de la Custom App — Shopify firma esos
+  // webhooks "legacy" con un secreto de firma propio del panel (el que se
+  // muestra ahí mismo, "Tus webhooks se firmarán con..."), que NO es el
+  // mismo valor que SHOPIFY_APP_CLIENT_SECRET (ese es del flujo OAuth de
+  // api/install.js). Configurar la variable equivocada aquí haría que
+  // Shopify reintente el webhook para siempre con 401 sin que se note,
+  // hasta que alguien revise los logs.
+  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
 
   if (!verifyShopifyWebhook(rawBody, req.headers['x-shopify-hmac-sha256'], secret)) {
     res.status(401).send('Invalid HMAC');
