@@ -91,8 +91,10 @@ function formatFechaHora(iso) {
 function renderNota(order) {
   const { fecha, hora } = formatFechaHora(order.createdAt);
   const cliente = order.customer?.displayName || 'Clientes Varios';
-  const direccion = [order.shippingAddress?.address1, order.shippingAddress?.address2, order.shippingAddress?.city]
-    .filter(Boolean).join(', ');
+  const direccion = order.shippingAddress?.address1 || '—';
+  const ciudad = order.shippingAddress?.city || 'Lima';
+  const distrito = getAttr(order.customAttributes, ['Distrito'], '—');
+  const referencia = getAttr(order.customAttributes, ['Referencia Entrega'], '');
   const metodo = getAttr(order.customAttributes, ['Metodo de Pago'], '—');
   const billete = getAttr(order.customAttributes, ['Paga con Billete'], 'N/A');
   const vuelto = getAttr(order.customAttributes, ['Vuelto Requerido'], 'N/A');
@@ -147,7 +149,13 @@ function renderNota(order) {
       <div class="row"><span class="label">Fecha</span><span class="val">${fecha}</span></div>
       <div class="row"><span class="label">Hora</span><span class="val">${hora}</span></div>
       <div class="row"><span class="label">Cliente</span><span class="val">${esc(cliente)}</span></div>
+    </div>
+    <hr class="divider">
+    <div class="meta">
       <div class="row"><span class="label">Dirección</span><span class="val">${esc(direccion)}</span></div>
+      <div class="row"><span class="label">Distrito</span><span class="val">${esc(distrito)}</span></div>
+      ${referencia ? `<div class="row"><span class="label">Referencia</span><span class="val">${esc(referencia)}</span></div>` : ''}
+      <div class="row"><span class="label">Ciudad</span><span class="val">${esc(ciudad)}</span></div>
     </div>
     <hr class="divider">
     <table class="items">
