@@ -81,6 +81,29 @@ async function fetchOrder(pedido) {
   return data.orders.nodes[0] || null;
 }
 
+const PAID_ORDERS_QUERY = `
+  query PedidosPagados($first: Int!) {
+    orders(first: $first, query: "financial_status:paid fulfillment_status:unfulfilled", sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        name
+        createdAt
+        customer { displayName phone }
+        shippingAddress { address1 address2 city country }
+        lineItems(first: 20) {
+          nodes { title quantity originalUnitPriceSet { shopMoney { amount } } }
+        }
+        totalPriceSet { shopMoney { amount } }
+        customAttributes { key value }
+      }
+    }
+  }
+`;
+
+async function fetchPaidUnfulfilledOrders() {
+  const data = await shopifyGraphql(PAID_ORDERS_QUERY, { first: 50 });
+  return data.orders.nodes;
+}
+
 function formatFechaHora(iso) {
   const d = new Date(iso);
   const fecha = d.toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
@@ -178,27 +201,12 @@ function renderNota(order) {
 </body></html>`;
 }
 
-function renderEtiqueta(order) {
-  const { fecha } = formatFechaHora(order.createdAt);
-  const cliente = order.customer?.displayName || 'Clientes Varios';
-  const celular = order.customer?.phone || '—';
-  const distrito = getAttr(order.customAttributes, ['Distrito'], '');
-  const referencia = getAttr(order.customAttributes, ['Referencia Entrega'], '');
-  const metodo = getAttr(order.customAttributes, ['Metodo de Pago'], '—');
-  const billete = getAttr(order.customAttributes, ['Paga con Billete'], 'N/A');
-  const vuelto = getAttr(order.customAttributes, ['Vuelto Requerido'], 'N/A');
-  const esEfectivo = metodo === 'Efectivo';
-  const direccion = order.shippingAddress?.address1 || '';
-  const ciudad = order.shippingAddress?.city || 'Lima';
-  const total = order.totalPriceSet.shopMoney.amount;
-  const itemsLine = order.lineItems.nodes.map((i) => `${i.quantity} × ${esc(i.title)}`).join(', ');
-
-  return `<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8"><title>Etiqueta ${esc(order.name)} — Nido Hogar</title>
-<style>
+const ETIQUETA_STYLES = `
   @page { size: 100mm 150mm; margin: 0; }
   * { box-sizing: border-box; }
-  body { margin: 0; width: 100mm; height: 150mm; font-family: -apple-system, sans-serif; color: #1A1A1A; background: #FFFFFF; }
+  body { margin: 0; font-family: -apple-system, sans-serif; color: #1A1A1A; background: #FFFFFF; }
+  .label-page { width: 100mm; height: 150mm; page-break-after: always; }
+  .label-page:last-child { page-break-after: auto; }
   .label { width: 100mm; height: 150mm; padding: 5mm; display: flex; flex-direction: column; }
   .brand-row { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #1A1A1A; padding-bottom: 3mm; margin-bottom: 3mm; }
   .brand { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; }
@@ -218,9 +226,25 @@ function renderEtiqueta(order) {
   .footer-row { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px dashed #B9B3A6; padding-top: 2.5mm; }
   .footer-row .ref { font-size: 8.5px; color: #6E685C; max-width: 60mm; line-height: 1.4; }
   .footer-row .date { font-size: 8.5px; color: #6E685C; text-align: right; white-space: nowrap; }
-</style></head>
-<body>
-  <div class="label">
+`;
+
+function labelBlock(order) {
+  const { fecha } = formatFechaHora(order.createdAt);
+  const cliente = order.customer?.displayName || 'Clientes Varios';
+  const celular = order.customer?.phone || '—';
+  const distrito = getAttr(order.customAttributes, ['Distrito'], '');
+  const referencia = getAttr(order.customAttributes, ['Referencia Entrega'], '');
+  const metodo = getAttr(order.customAttributes, ['Metodo de Pago'], '—');
+  const billete = getAttr(order.customAttributes, ['Paga con Billete'], 'N/A');
+  const vuelto = getAttr(order.customAttributes, ['Vuelto Requerido'], 'N/A');
+  const esEfectivo = metodo === 'Efectivo';
+  const direccion = order.shippingAddress?.address1 || '';
+  const ciudad = order.shippingAddress?.city || 'Lima';
+  const total = order.totalPriceSet.shopMoney.amount;
+  const itemsLine = order.lineItems.nodes.map((i) => `${i.quantity} × ${esc(i.title)}`).join(', ');
+
+  return `
+  <div class="label-page"><div class="label">
     <div class="brand-row">
       <div class="brand">Nido Hogar</div>
       <div class="order-num">${esc(order.name)}<small>N.° de pedido</small></div>
@@ -245,7 +269,28 @@ function renderEtiqueta(order) {
       <div class="ref">Entrega: Lima Metropolitana · 24–48h</div>
       <div class="date">${fecha}</div>
     </div>
-  </div>
+  </div></div>`;
+}
+
+function renderEtiqueta(order) {
+  return `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Etiqueta ${esc(order.name)} — Nido Hogar</title>
+<style>${ETIQUETA_STYLES}</style></head>
+<body>${labelBlock(order)}
+  <script>window.onload = function(){ window.print(); };</script>
+</body></html>`;
+}
+
+function renderEtiquetasBatch(orders) {
+  if (orders.length === 0) {
+    return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Etiquetas — Nido Hogar</title></head>
+    <body style="font-family:sans-serif;padding:24px;">No hay pedidos pagados pendientes de etiqueta ahora mismo.</body></html>`;
+  }
+  const blocks = orders.map(labelBlock).join('\n');
+  return `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Etiquetas pagadas (${orders.length}) — Nido Hogar</title>
+<style>${ETIQUETA_STYLES}</style></head>
+<body>${blocks}
   <script>window.onload = function(){ window.print(); };</script>
 </body></html>`;
 }
@@ -262,9 +307,20 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const pedido = req.query.pedido;
-  const tipo = req.query.tipo === 'etiqueta' ? 'etiqueta' : 'nota';
+  const tipo = req.query.tipo === 'etiqueta' ? 'etiqueta' : req.query.tipo === 'etiquetas-pagadas' ? 'etiquetas-pagadas' : 'nota';
 
+  if (tipo === 'etiquetas-pagadas') {
+    try {
+      const orders = await fetchPaidUnfulfilledOrders();
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(200).send(renderEtiquetasBatch(orders));
+    } catch (err) {
+      res.status(500).send('Error generando las etiquetas: ' + err.message);
+    }
+    return;
+  }
+
+  const pedido = req.query.pedido;
   if (!pedido) {
     res.status(400).send('Falta ?pedido=1013');
     return;

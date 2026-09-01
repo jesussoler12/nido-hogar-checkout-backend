@@ -114,6 +114,8 @@ module.exports = async (req, res) => {
   .btn { display: inline-block; padding: 6px 10px; border-radius: 7px; font-size: 12px; font-weight: 700; text-decoration: none; margin-right: 6px; }
   .btn-nota { background: #1A3B31; color: #FFFFFF; }
   .btn-etiqueta { background: #F3F4F6; color: #1B2E28; border: 1px solid #EAE6DF; }
+  .btn-batch { display: inline-block; padding: 10px 16px; border-radius: 8px; font-size: 13.5px; font-weight: 700; text-decoration: none; background: #A8471F; color: #FFFFFF; margin-bottom: 18px; }
+  .batch-note { font-size: 12px; color: #6E685C; margin: -12px 0 20px; }
   @media (max-width: 640px) {
     table, thead, tbody, tr { display: block; }
     thead { display: none; }
@@ -125,6 +127,8 @@ module.exports = async (req, res) => {
 <body>
   <h1>Centro de impresión</h1>
   <p class="sub">Últimos ${orders.length} pedidos — un clic abre e imprime directo.</p>
+  <a class="btn-batch" href="/api/documento?tipo=etiquetas-pagadas${tokenQs}" target="_blank" rel="noopener">🏷️ Imprimir todas las etiquetas pagadas</a>
+  <p class="batch-note">Solo pedidos pagados y aún no despachados — cada uno en su propia hoja, listo para imprimir de una vez.</p>
   <table>
     <thead><tr><th>Pedido</th><th>Cliente</th><th>Fecha</th><th class="num">Total</th><th>Pago</th><th>Imprimir</th></tr></thead>
     <tbody>${rows}</tbody>
