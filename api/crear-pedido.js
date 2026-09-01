@@ -172,7 +172,7 @@ function sha256Hex(value) {
 // quedó creado, que es lo crítico.
 async function sendMetaPurchaseEvent({ req, order, cliente, phoneE164, total, fbp, fbc }) {
   const accessToken = process.env.META_CAPI_TOKEN;
-  if (!accessToken) return;
+  if (!accessToken) return { sent: false, reason: 'META_CAPI_TOKEN no configurado en el entorno' };
 
   const pixelId = process.env.META_PIXEL_ID || DEFAULT_META_PIXEL_ID;
   const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -213,12 +213,15 @@ async function sendMetaPurchaseEvent({ req, order, cliente, phoneE164, total, fb
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    const responseJson = await response.json().catch(() => null);
     if (!response.ok) {
-      const errText = await response.text();
-      console.error('Meta CAPI respondió con error:', response.status, errText);
+      console.error('Meta CAPI respondió con error:', response.status, JSON.stringify(responseJson));
+      return { sent: false, status: response.status, error: responseJson };
     }
+    return { sent: true, eventsReceived: responseJson && responseJson.events_received, fbtraceId: responseJson && responseJson.fbtrace_id };
   } catch (err) {
     console.error('Meta CAPI: fallo de red al enviar el evento Purchase:', err.message);
+    return { sent: false, reason: err.message };
   }
 }
 
@@ -537,7 +540,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    await sendMetaPurchaseEvent({
+    const metaCapiResult = await sendMetaPurchaseEvent({
       req,
       order,
       cliente,
@@ -551,6 +554,12 @@ module.exports = async (req, res) => {
       ok: true,
       order_id: order.id,
       order_number: order.name,
+      // Diagnóstico de si el evento Purchase realmente llegó a Meta CAPI —
+      // no afecta al cliente, es solo para verificar que Vercel↔Meta esté
+      // bien conectado (a pedido explícito, tras confirmar que el pixel
+      // del navegador sí funcionaba pero nunca se había verificado el lado
+      // servidor-a-servidor).
+      meta_capi: metaCapiResult,
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message || 'Error inesperado al crear el pedido.' });
