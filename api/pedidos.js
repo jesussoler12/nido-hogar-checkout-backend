@@ -43,6 +43,14 @@ function money(n) {
   return 'S/ ' + (Number.isFinite(num) ? num.toFixed(2) : '0.00');
 }
 
+function getAttr(customAttributes, names, fallback) {
+  for (const name of names) {
+    const found = (customAttributes || []).find((a) => a.key === name);
+    if (found && found.value) return found.value;
+  }
+  return fallback;
+}
+
 const LIST_QUERY = `
   query PedidosRecientes($first: Int!) {
     orders(first: $first, sortKey: CREATED_AT, reverse: true) {
@@ -52,6 +60,8 @@ const LIST_QUERY = `
         displayFinancialStatus
         displayFulfillmentStatus
         customer { displayName }
+        shippingAddress { address1 city }
+        customAttributes { key value }
         totalPriceSet { shopMoney { amount } }
       }
     }
@@ -80,10 +90,18 @@ module.exports = async (req, res) => {
       const fecha = new Date(o.createdAt).toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
       const estadoPago = o.displayFinancialStatus === 'PAID' ? 'Pagado' : 'Pendiente';
       const estadoClase = o.displayFinancialStatus === 'PAID' ? 'ok' : 'pend';
+      const direccion = o.shippingAddress?.address1 || '—';
+      const distrito = getAttr(o.customAttributes, ['Distrito'], '—');
+      const destino = getAttr(o.customAttributes, ['Destino de Envio'], 'Lima Metropolitana');
+      const referencia = getAttr(o.customAttributes, ['Referencia Entrega'], '');
       return `
         <tr>
           <td class="num">${esc(o.name)}</td>
           <td>${esc(o.customer?.displayName || 'Clientes Varios')}</td>
+          <td class="entrega">
+            <div class="entrega-linea">${esc(direccion)}</div>
+            <div class="entrega-sub">${esc(distrito)} · ${esc(destino)}${referencia ? ' · Ref: ' + esc(referencia) : ''}</div>
+          </td>
           <td>${fecha}</td>
           <td class="num">${money(o.totalPriceSet.shopMoney.amount)}</td>
           <td><span class="badge ${estadoClase}">${estadoPago}</span></td>
@@ -111,6 +129,9 @@ module.exports = async (req, res) => {
   .badge.ok { background: #ECFDF5; color: #047857; }
   .badge.pend { background: #FBEAE6; color: #8A2E17; }
   .actions { white-space: nowrap; }
+  .entrega { max-width: 220px; }
+  .entrega-linea { font-weight: 600; }
+  .entrega-sub { font-size: 11.5px; color: #6E685C; margin-top: 2px; }
   .btn { display: inline-block; padding: 6px 10px; border-radius: 7px; font-size: 12px; font-weight: 700; text-decoration: none; margin-right: 6px; }
   .btn-nota { background: #1A3B31; color: #FFFFFF; }
   .btn-etiqueta { background: #F3F4F6; color: #1B2E28; border: 1px solid #EAE6DF; }
@@ -130,7 +151,7 @@ module.exports = async (req, res) => {
   <a class="btn-batch" href="/api/documento?tipo=etiquetas-pagadas${tokenQs}" target="_blank" rel="noopener">🏷️ Imprimir todas las etiquetas pagadas</a>
   <p class="batch-note">Solo pedidos pagados y aún no despachados — cada uno en su propia hoja, listo para imprimir de una vez.</p>
   <table>
-    <thead><tr><th>Pedido</th><th>Cliente</th><th>Fecha</th><th class="num">Total</th><th>Pago</th><th>Imprimir</th></tr></thead>
+    <thead><tr><th>Pedido</th><th>Cliente</th><th>Entrega</th><th>Fecha</th><th class="num">Total</th><th>Pago</th><th>Imprimir</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
 </body></html>`;
