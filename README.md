@@ -108,6 +108,28 @@ de seguridad de la integración que uso para administrar tu tienda. Entra a
 **Admin → Pedidos → #1002** y cancélala manualmente (con "restock" activado)
 para que el stock y tus reportes queden limpios.
 
+## 5. Exportar pedidos a Google Sheets (dashboard de rentabilidad)
+
+`GET /api/pedidos-csv?token=...` devuelve tus pedidos reales en CSV (fecha,
+pedido, cliente, distrito, método de pago, total, estado de pago, estado de
+envío) — protegido con el mismo `DOCUMENTOS_SECRET` que ya usan `/api/pedidos`
+y `/api/documento`.
+
+En una hoja de Google Sheets, en la celda A1 de una pestaña nueva:
+
+```
+=IMPORTDATA("https://tu-proyecto.vercel.app/api/pedidos-csv?token=TU_TOKEN")
+```
+
+Sheets la vuelve a jalar solo (al abrir el archivo y cada cierto tiempo). Ese
+CSV es la fuente de **ventas** del dashboard; el costo de envío (Shalom, Olva
+Curier, etc.) y el gasto de Meta Ads no salen de Shopify, así que se
+ingresan a mano en pestañas aparte y se cruzan por N° de pedido / mes con
+fórmulas.
+
+Por defecto trae los últimos 500 pedidos — usa `&max=2000` en la URL si
+necesitas más histórico.
+
 ## Notas de seguridad
 
 - `SHOPIFY_ADMIN_TOKEN` vive **solo** en las variables de entorno de Vercel.
