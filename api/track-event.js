@@ -108,6 +108,11 @@ module.exports = async (req, res) => {
     ],
     access_token: accessToken,
   };
+  // Permite probar el endpoint desde Events Manager > Herramienta de pruebas
+  // de eventos sin mezclar datos falsos con el tráfico real: si el llamador
+  // manda test_event_code, se reenvía a Meta tal cual (Meta lo usa solo para
+  // enrutar el evento a la vista de pruebas, no lo cuenta como real).
+  if (body.test_event_code) payload.test_event_code = body.test_event_code;
 
   try {
     const response = await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
