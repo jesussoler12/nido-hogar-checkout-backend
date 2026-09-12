@@ -20,8 +20,6 @@
 
 const crypto = require('crypto');
 
-const DEFAULT_META_PIXEL_ID = '1991488321555698';
-
 module.exports.config = { api: { bodyParser: false } };
 
 function readRawBody(req) {
@@ -99,7 +97,14 @@ module.exports = async (req, res) => {
     res.status(200).send('ok (META_CAPI_TOKEN no configurado, se ignora)');
     return;
   }
-  const pixelId = process.env.META_PIXEL_ID || DEFAULT_META_PIXEL_ID;
+  // Debe coincidir exactamente con el Pixel inicializado en el tema
+  // (layout/theme.liquid, fbq('init', ...)) — ver nota equivalente en
+  // crear-pedido.js.
+  const pixelId = process.env.META_PIXEL_ID;
+  if (!pixelId) {
+    res.status(200).send('ok (META_PIXEL_ID no configurado, se ignora)');
+    return;
+  }
 
   const phoneRaw = order.phone
     || (order.shipping_address && order.shipping_address.phone)

@@ -13,11 +13,6 @@ const crypto = require('crypto');
 
 const SHOPIFY_API_VERSION = '2026-07';
 
-// Pixel ya instalado en el tema (layout/theme.liquid) — no depende de una
-// variable de entorno para poder mandar eventos aunque META_PIXEL_ID no se
-// configure explícitamente en Vercel.
-const DEFAULT_META_PIXEL_ID = '1991488321555698';
-
 const REQUIRED_ENV = [
   'SHOPIFY_STORE_DOMAIN',
   'SHOPIFY_ADMIN_TOKEN',
@@ -174,7 +169,13 @@ async function sendMetaPurchaseEvent({ req, order, cliente, phoneE164, total, fb
   const accessToken = process.env.META_CAPI_TOKEN;
   if (!accessToken) return { sent: false, reason: 'META_CAPI_TOKEN no configurado en el entorno' };
 
-  const pixelId = process.env.META_PIXEL_ID || DEFAULT_META_PIXEL_ID;
+  // Debe coincidir exactamente con el Pixel inicializado en el tema
+  // (layout/theme.liquid, fbq('init', ...)) — sin esta variable configurada
+  // en Vercel, el evento no se manda (igual que si faltara META_CAPI_TOKEN),
+  // en vez de mandarse silenciosamente a un Pixel ID desactualizado.
+  const pixelId = process.env.META_PIXEL_ID;
+  if (!pixelId) return { sent: false, reason: 'META_PIXEL_ID no configurado en el entorno' };
+
   const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   const clientIp = forwardedFor || req.socket?.remoteAddress;
 
